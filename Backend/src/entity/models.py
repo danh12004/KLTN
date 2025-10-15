@@ -55,6 +55,7 @@ class Farm(db.Model):
     area_ha = db.Column(db.Float, nullable=False)
     planting_date = db.Column(db.Date, nullable=True, default=date.today)
     soil_ph = db.Column(db.Float, nullable=True)
+    soil_type = db.Column(db.String(50), nullable=True, default='chưa rõ') 
     rice_variety = db.Column(db.String(50), nullable=False, default='ST25') 
 
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)

@@ -2,7 +2,6 @@ tensorflow
 pandas
 numpy
 Pillow
-google-generativeai
 Flask
 Flask-Cors
 Werkzeug
@@ -18,3 +17,5 @@ tf-keras
 openai
 bs4
 unidecode
+imagehash
+faker

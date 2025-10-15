@@ -35,7 +35,7 @@ export const SettingsProvider = ({ children }) => {
             if (user) {
                 try {
                     setLoading(true);
-                    const res = await api.get('/settings');
+                    const res = await api.get('/user/settings');
                     setSettings(res.data);
                 } catch (e) {
                     console.error("Lỗi khi tải cài đặt", e);
@@ -68,7 +68,7 @@ export const SettingsProvider = ({ children }) => {
 
     const saveSettings = async (newSettings) => {
         try {
-            await api.post('/settings', { notification_settings: newSettings });
+            await api.post('/user/settings', { notification_settings: newSettings });
             setSettings(newSettings);
         } catch (error) {
             console.error(error);

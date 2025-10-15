@@ -2,22 +2,150 @@ import faiss
 import numpy as np
 import json
 import re
-from sentence_transformers import SentenceTransformer
 import os
+from sentence_transformers import SentenceTransformer
+from src.logging.logger import logger
 
 class VectorStoreService:
-    def __init__(self, config_paths):
-        print("[VectorStore] Khởi tạo dịch vụ...")
+    """
+    Dịch vụ quản lý nhiều kho vector tri thức chuyên biệt.
+    Mỗi kho được tải hoặc xây dựng một cách linh hoạt khi được yêu cầu lần đầu tiên (lazy loading).
+    """
+    def __init__(self, config):
+        logger.info("Khởi tạo VectorStoreService (Manager)...")
+        self.config = config
         self.model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-        self.documents = [] 
-        self.index = None   
-        self._build_or_load_index(config_paths)
+        self._stores = {} 
 
-    def _chunk_text(self, text, chunk_size=1000, overlap=50):
+    def _get_store_paths(self, store_name: str):
+        """Tạo đường dẫn file động cho một kho tri thức cụ thể."""
+        base_dir = self.config.VECTOR_STORE_DIR
+        index_path = os.path.join(base_dir, f"faiss_index_{store_name}.bin")
+        docs_path = os.path.join(base_dir, f"documents_{store_name}.json")
+        return index_path, docs_path
+
+    def _build_store(self, store_name: str):
+        """Xây dựng một kho vector mới từ các nguồn dữ liệu được cấu hình."""
+        logger.info(f"Không tìm thấy cache cho kho '{store_name}'. Bắt đầu xây dựng mới...")
+        
+        sources_config = self.config.KNOWLEDGE_SOURCES.get(store_name)
+        if not sources_config:
+            logger.error(f"Không tìm thấy cấu hình nguồn tri thức cho kho '{store_name}'.")
+            return None
+
+        documents = self._load_and_process_sources(sources_config)
+        if not documents:
+            logger.warning(f"Không có tài liệu nào để index cho kho '{store_name}'.")
+            return None
+
+        logger.info(f"Bắt đầu tạo embeddings cho {len(documents)} tài liệu của kho '{store_name}'...")
+        texts_to_embed = [doc['content'] for doc in documents]
+        embeddings = self.model.encode(texts_to_embed, convert_to_tensor=False, show_progress_bar=True)
+        
+        dimension = embeddings.shape[1]
+        index = faiss.IndexFlatL2(dimension)
+        index.add(np.array(embeddings, dtype=np.float32))
+        logger.info(f"Xây dựng kho '{store_name}' thành công! Tổng cộng {index.ntotal} vector.")
+
+        index_path, docs_path = self._get_store_paths(store_name)
+        self._save_index(index, documents, index_path, docs_path)
+
+        return {"index": index, "documents": documents}
+
+    def get_store(self, store_name: str):
+        """
+        Lấy một kho tri thức cụ thể. Tải từ cache nếu có, nếu không thì xây dựng mới.
+        """
+        if store_name in self._stores:
+            return self._stores[store_name]
+
+        index_path, docs_path = self._get_store_paths(store_name)
+
+        if os.path.exists(index_path) and os.path.exists(docs_path):
+            try:
+                logger.info(f"Đang tải kho '{store_name}' từ cache...")
+                index = faiss.read_index(index_path)
+                with open(docs_path, 'r', encoding='utf-8') as f:
+                    documents = json.load(f)
+                logger.info(f"Tải thành công kho '{store_name}' với {index.ntotal} vector.")
+                
+                store_instance = {"index": index, "documents": documents}
+                self._stores[store_name] = store_instance
+                return store_instance
+            except Exception as e:
+                logger.warning(f"Lỗi khi tải kho '{store_name}' từ cache: {e}. Sẽ xây dựng lại.")
+
+        store_instance = self._build_store(store_name)
+        if store_instance:
+            self._stores[store_name] = store_instance
+        return store_instance
+    
+    def retrieve(self, store_name: str, query: str, k: int = 5) -> str:
+        """Thực hiện truy vấn trên một kho tri thức chuyên biệt."""
+        store = self.get_store(store_name)
+        if not store or store.get("index") is None:
+            logger.error(f"Truy vấn thất bại: Kho tri thức '{store_name}' chưa được khởi tạo.")
+            return f"Lỗi: Cơ sở tri thức '{store_name}' không khả dụng."
+
+        index = store["index"]
+        documents = store["documents"]
+        
+        query_embedding = self.model.encode([query])
+        
+        try:
+            _, indices = index.search(np.array(query_embedding, dtype=np.float32), k)
+            retrieved_docs = [documents[i] for i in indices[0]]
+            context = "\n---\n".join([doc['content'] for doc in retrieved_docs])
+            
+            logger.info(f"Đã truy xuất {len(retrieved_docs)} đoạn văn bản từ kho '{store_name}' cho câu hỏi: '{query[:50]}...'")
+            return context
+        except Exception as e:
+            logger.error(f"Lỗi trong quá trình truy xuất từ kho '{store_name}': {e}")
+            return "Lỗi: Đã xảy ra sự cố khi tìm kiếm thông tin."
+
+    def _save_index(self, index, documents, index_path, docs_path):
+        logger.info(f"Đang lưu index và documents vào: {os.path.dirname(index_path)}")
+        try:
+            os.makedirs(os.path.dirname(index_path), exist_ok=True)
+            faiss.write_index(index, index_path)
+            with open(docs_path, 'w', encoding='utf-8') as f:
+                json.dump(documents, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Lỗi khi lưu vector store: {e}")
+
+    def _load_and_process_sources(self, sources_config):
+        all_documents = []
+        for source_info in sources_config:
+            path = source_info["path"]
+            if not os.path.exists(path):
+                logger.warning(f"Không tìm thấy file nguồn: {path}")
+                continue
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    source_type = source_info["type"]
+                    metadata = source_info.get("metadata", {})
+                    if source_type == "json":
+                        data = json.load(f)
+                        for key, value in data.items():
+                            content = self._flatten_json_to_text(value, f"{metadata.get('topic', '')} {key}".strip())
+                            for chunk in self._chunk_text(content):
+                                doc = {"content": chunk, "source": os.path.basename(path), **metadata}
+                                if "sub_topic_key" in metadata:
+                                    doc[metadata["sub_topic_key"]] = key
+                                all_documents.append(doc)
+                    elif source_type == "txt":
+                        text_content = f.read()
+                        for chunk in self._chunk_text(text_content):
+                            all_documents.append({"content": chunk, "source": os.path.basename(path), **metadata})
+                logger.info(f"Đã xử lý thành công nguồn: {source_info['id']}")
+            except Exception as e:
+                logger.error(f"Không thể xử lý file {path}: {e}")
+        return all_documents
+
+    def _chunk_text(self, text, chunk_size=1000, overlap=200):
         sentences = re.split(r'(?<=[.!?])\s+', text.replace('\n', ' '))
         chunks = []
         current_chunk = ""
-
         for sentence in sentences:
             if len(current_chunk) + len(sentence) + 1 <= chunk_size:
                 current_chunk += sentence + " "
@@ -25,141 +153,19 @@ class VectorStoreService:
                 chunks.append(current_chunk.strip())
                 overlap_content = ' '.join(current_chunk.split()[-overlap:])
                 current_chunk = overlap_content + " " + sentence + " "
-        
         if current_chunk:
             chunks.append(current_chunk.strip())
-            
         return chunks
 
     def _flatten_json_to_text(self, data, prefix=""):
         text_parts = []
         if isinstance(data, dict):
             for key, value in data.items():
-                new_prefix = f"{prefix} {key}".strip()
-                text_parts.append(self._flatten_json_to_text(value, new_prefix))
+                text_parts.append(self._flatten_json_to_text(value, f"{prefix} {key}".strip().replace("_", " ")))
         elif isinstance(data, list):
             for i, item in enumerate(data):
-                new_prefix = f"{prefix} {i + 1}".strip()
-                text_parts.append(self._flatten_json_to_text(item, new_prefix))
+                text_parts.append(self._flatten_json_to_text(item, f"{prefix} mục {i + 1}".strip()))
         else:
             return f"{prefix}: {data}."
-        
         return " ".join(filter(None, text_parts))
 
-    def _load_and_process_sources(self, config_paths):
-        try:
-            rice_path = config_paths.get("rice_varieties_path")
-            if rice_path and os.path.exists(rice_path):
-                with open(rice_path, 'r', encoding='utf-8') as f:
-                    rice_data = json.load(f)
-                    for rice_name, info in rice_data.items():
-                        content = self._flatten_json_to_text(info, f"Giống lúa {rice_name}")
-                        chunks = self._chunk_text(content)
-                        for chunk in chunks:
-                            self.documents.append({
-                                "content": chunk,
-                                "source": "rice_varieties.json",
-                                "rice_variety": rice_name
-                            })
-                print(f"[VectorStore] Đã xử lý thành công file: {rice_path}")
-            else:
-                print(f"[CẢNH BÁO VectorStore] Không tìm thấy file rice_varieties.json tại: {rice_path}")
-        except Exception as e:
-            print(f"[LỖI VectorStore] Không thể tải rice_varieties.json: {e}")
-
-        try:
-            disease_path = config_paths.get("knowledge_base_path")
-            if disease_path and os.path.exists(disease_path):
-                with open(disease_path, 'r', encoding='utf-8') as f:
-                    disease_data = json.load(f)
-                    for disease_name, info in disease_data.items():
-                        content = self._flatten_json_to_text(info, f"Bệnh {disease_name}")
-                        chunks = self._chunk_text(content)
-                        for chunk in chunks:
-                            self.documents.append({
-                                "content": chunk,
-                                "source": "knowledge_base.json",
-                                "disease_name": disease_name 
-                            })
-                print(f"[VectorStore] Đã xử lý thành công file: {disease_path}")
-            else:
-                print(f"[CẢNH BÁO VectorStore] Không tìm thấy file knowledge_base.json tại: {disease_path}")
-        except Exception as e:
-            print(f"[LỖI VectorStore] Không thể tải knowledge_base.json: {e}")
-
-        try:
-            fertilizer_path = config_paths.get("fertilizer_path")
-            if fertilizer_path and os.path.exists(fertilizer_path):
-                with open(fertilizer_path, 'r', encoding='utf-8') as f:
-                    fertilizer_text = f.read()
-                    chunks = self._chunk_text(fertilizer_text)
-                    for chunk in chunks:
-                        self.documents.append({
-                            "content": chunk,
-                            "source": "fertilizer.txt"
-                        })
-                print(f"[VectorStore] Đã xử lý thành công file: {fertilizer_path}")
-        except Exception as e:
-            print(f"[LỖI VectorStore] Không thể tải file fertilizer.txt: {e}")
-
-    def _save_index(self, index_path, documents_path):
-        print("[VectorStore] Đang lưu index và documents vào ổ đĩa...")
-        vector_store_dir = os.path.dirname(index_path)
-        os.makedirs(vector_store_dir, exist_ok=True)
-        faiss.write_index(self.index, index_path)
-        with open(documents_path, 'w', encoding='utf-8') as f:
-            json.dump(self.documents, f, ensure_ascii=False, indent=2)
-        print(f"[VectorStore] Đã lưu thành công vào: {vector_store_dir}")
-
-    def _load_index(self, index_path, documents_path):
-        print("[VectorStore] Đang tải index và documents từ ổ đĩa...")
-        self.index = faiss.read_index(index_path)
-        with open(documents_path, 'r', encoding='utf-8') as f:
-            self.documents = json.load(f)
-        print(f"[VectorStore] Tải thành công {self.index.ntotal} vector từ cache.")
-
-    def _build_or_load_index(self, config_paths):
-        index_path = config_paths.get("vector_index_path")
-        docs_path = config_paths.get("vector_documents_path")
-
-        if index_path and docs_path and os.path.exists(index_path) and os.path.exists(docs_path):
-            try:
-                self._load_index(index_path, docs_path)
-                return 
-            except Exception as e:
-                print(f"[CẢNH BÁO VectorStore] Lỗi khi tải index từ cache: {e}. Sẽ tiến hành xây dựng lại.")
-        
-        print("[VectorStore] Không tìm thấy cache. Bắt đầu xây dựng cơ sở dữ liệu vector mới...")
-        self._load_and_process_sources(config_paths)
-
-        if not self.documents:
-            print("[CẢNH BÁO VectorStore] Không có tài liệu nào để index. Vui lòng kiểm tra đường dẫn file.")
-            return
-
-        print("[VectorStore] Bắt đầu tạo embeddings cho các tài liệu...")
-        texts_to_embed = [doc['content'] for doc in self.documents]
-        embeddings = self.model.encode(texts_to_embed, convert_to_tensor=False, show_progress_bar=True)
-        
-        dimension = embeddings.shape[1]
-        self.index = faiss.IndexFlatL2(dimension)
-        self.index.add(np.array(embeddings, dtype=np.float32))
-        print(f"[VectorStore] Xây dựng thành công! Tổng cộng {self.index.ntotal} vector từ {len(self.documents)} đoạn tri thức đã được index.")
-
-        if self.index and index_path and docs_path:
-            self._save_index(index_path, docs_path)
-
-    def retrieve(self, query: str, k: int = 3) -> str:
-        if self.index is None:
-            return "Lỗi: Cơ sở tri thức chưa được khởi tạo hoặc xây dựng thất bại."
-
-        query_embedding = self.model.encode([query])
-        
-        distances, indices = self.index.search(np.array(query_embedding, dtype=np.float32), k)
-        
-        retrieved_docs_data = [self.documents[i] for i in indices[0]]
-        retrieved_contents = [doc['content'] for doc in retrieved_docs_data]
-        
-        context = "\n---\n".join(retrieved_contents)
-        
-        print(f"[VectorStore] Đã truy xuất {len(retrieved_contents)} đoạn văn bản cho câu hỏi: '{query}'")
-        return context

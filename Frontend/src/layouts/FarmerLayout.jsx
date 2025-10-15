@@ -1,12 +1,16 @@
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Microscope, History, Settings, LogOut, Bell, MessageCircle } from 'lucide-react';
+import { LayoutDashboard, History, Settings, LogOut, Bell, MessageCircle, Leaf, Droplet } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 import FarmerDashboardPage from '../pages/farmer/FarmerDashboardPage';
 import HistoryPage from '../pages/farmer/HistoryPage';
-import SettingsPage from '../pages/farmer/SettingsPage'; 
+import SettingsPage from '../pages/farmer/SettingsPage';
 import NotificationPage from '../pages/farmer/NotificationPage';
 import QAPage from '../pages/farmer/QAPage';
+
+import FertilizerPlanPage from '../pages/farmer/FertilizerPlanPage';
+import WaterPlanPage from '../pages/farmer/WaterPlanPage';
+
 
 const FarmerLayout = () => {
     const { logout, user } = useAuth();
@@ -14,13 +18,15 @@ const FarmerLayout = () => {
 
     const handleLogout = () => {
         logout();
-        navigate('/login', { replace: true }); 
+        navigate('/login', { replace: true });
     };
 
     const navItems = [
         { to: "/farmer/dashboard", icon: <LayoutDashboard size={20} />, label: "Tổng Quan" },
         { to: "/farmer/notifications", icon: <Bell size={20} />, label: "Thông Báo" },
-        { to: "/farmer/qa", icon: <MessageCircle size={20} />, label: "Hỏi Đáp AI" }, 
+        { to: "/farmer/qa", icon: <MessageCircle size={20} />, label: "Hỏi Đáp AI" },
+        { to: "/farmer/fertilizer-plan", icon: <Leaf size={20} />, label: "Bón Phân" },
+        { to: "/farmer/water-plan", icon: <Droplet size={20} />, label: "Tưới Tiêu" },
         { to: "/farmer/history", icon: <History size={20} />, label: "Lịch Sử" },
         { to: "/farmer/settings", icon: <Settings size={20} />, label: "Cài Đặt" },
     ];
@@ -58,6 +64,10 @@ const FarmerLayout = () => {
                     <Route path="dashboard" element={<FarmerDashboardPage />} />
                     <Route path="notifications" element={<NotificationPage />} />
                     <Route path="qa" element={<QAPage />} />
+                    
+                    <Route path="fertilizer-plan" element={<FertilizerPlanPage />} />
+                    <Route path="water-plan" element={<WaterPlanPage />} />
+
                     <Route path="history" element={<HistoryPage />} />
                     <Route path="settings" element={<SettingsPage />} />
 

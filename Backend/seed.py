@@ -6,13 +6,15 @@ from datetime import date, timedelta, datetime
 
 from app import create_app
 from src.entity.models import db, User, Farm, AnalysisSession, Message, UserSettings
+from src.logging.logger import logger
 
 app = create_app()
 fake = Faker('vi_VN') 
 
 PH_RANGE_PER_PROVINCE = {
-    "An Giang": (4, 5.5), "Đồng Tháp": (4.5, 5.5), "Cần Thơ": (5.0, 6.5), 
-    "Hà Nội": (5.5, 6.5), "Ninh Bình": (4.5, 6.5)
+    "An Giang": (4.0, 5.5), "Đồng Tháp": (4.5, 5.5), "Cần Thơ": (5.0, 6.5), 
+    "Hà Nội": (5.5, 6.5), "Ninh Bình": (4.5, 6.5), "Sóc Trăng": (4.0, 5.0),
+    "Kiên Giang": (4.5, 6.0)
 }
 provinces = list(PH_RANGE_PER_PROVINCE.keys())
 DISEASES = ["Đạo ôn", "Đốm nâu", "Cháy bìa lá", "Khỏe mạnh"]
@@ -33,8 +35,10 @@ USER_MESSAGES = [
 ]
 
 RICE_VARIETIES = ["OM7347", "ST25", "ST24", "ST 21-3", "Dai Thom 8"]
+SOIL_TYPES = ["đất phù sa", "đất phèn", "đất mặn", "đất sét", "đất thịt trung bình"]
 
 def create_fake_plan(disease_name, farm_area_ha):
+    """Tạo một đối tượng JSON kế hoạch điều trị giả."""
     if disease_name == "Khỏe mạnh":
         return None
     
@@ -71,9 +75,9 @@ def create_fake_plan(disease_name, farm_area_ha):
 
 
 with app.app_context():
-    print("Bắt đầu quá trình nạp dữ liệu (seeding)...")
+    logger.info("Bắt đầu quá trình nạp dữ liệu (seeding)...")
     
-    print("-> Bước 1: Xóa toàn bộ dữ liệu cũ...")
+    logger.info("-> Bước 1: Xóa toàn bộ dữ liệu cũ...")
     Message.query.delete()
     AnalysisSession.query.delete()
     Farm.query.delete()
@@ -81,7 +85,7 @@ with app.app_context():
     User.query.delete()
     db.session.commit()
     
-    print("-> Bước 2: Tạo tài khoản Admin...")
+    logger.info("-> Bước 2: Tạo tài khoản Admin...")
     admin_user = User(
         username='admin',
         password='123456',
@@ -93,7 +97,7 @@ with app.app_context():
     admin_settings = UserSettings(user=admin_user)
     db.session.add(admin_settings)
 
-    print(f"-> Bước 3: Tạo dữ liệu cho 6 nông hộ...")
+    logger.info("-> Bước 3: Tạo dữ liệu cho 6 nông hộ...")
     for i in range(6):
         farmer_user = User(
             username=f'nongdan{i+1}',
@@ -119,6 +123,7 @@ with app.app_context():
             area_ha=round(random.uniform(0.5, 2.0), 1),
             planting_date=date.today() - timedelta(days=random.randint(20, 100)),
             soil_ph=round(random.uniform(min_ph, max_ph), 1),
+            soil_type=random.choice(SOIL_TYPES), 
             rice_variety=random.choice(RICE_VARIETIES), 
             owner=farmer_user
         )
@@ -145,14 +150,14 @@ with app.app_context():
                 db.session.add(ai_first_message)
                 db.session.add(user_reply_message)
 
-    print("-> Bước 4: Lưu tất cả dữ liệu vào database...")
+    logger.info("-> Bước 4: Lưu tất cả dữ liệu vào database...")
     db.session.commit()
 
-    print("-" * 30)
-    print(" HOÀN TẤT ".center(30, "="))
-    print(f"Tổng số Users: {User.query.count()} ({User.query.filter_by(role='admin').count()} admin, {User.query.filter_by(role='farmer').count()} farmer)")
-    print(f"Tổng số UserSettings: {UserSettings.query.count()}")
-    print(f"Tổng số Farms: {Farm.query.count()}")
-    print(f"Tổng số Sessions: {AnalysisSession.query.count()}")
-    print(f"Tổng số Messages: {Message.query.count()}")
-    print("-" * 30)
+    logger.info("-" * 30)
+    logger.info(" HOÀN TẤT ".center(30, "="))
+    logger.info(f"Tổng số Users: {User.query.count()} ({User.query.filter_by(role='admin').count()} admin, {User.query.filter_by(role='farmer').count()} farmer)")
+    logger.info(f"Tổng số UserSettings: {UserSettings.query.count()}")
+    logger.info(f"Tổng số Farms: {Farm.query.count()}")
+    logger.info(f"Tổng số Sessions: {AnalysisSession.query.count()}")
+    logger.info(f"Tổng số Messages: {Message.query.count()}")
+    logger.info("-" * 30)
