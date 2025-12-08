@@ -11,7 +11,7 @@ from src.logging.logger import logger
 plan_bp = Blueprint('plan_api', __name__)
 
 TASK_DURATION_WATER_SECONDS = 10     
-TASK_DURATION_SCHEDULED_SECONDS = 300
+TASK_DURATION_SCHEDULED_SECONDS = 10
 
 FOLLOW_UP_DAYS_TREATMENT = 7  
 FOLLOW_UP_DAYS_FERTILIZER = 10
@@ -85,6 +85,23 @@ def _execute_task_in_background(app, session_id, plan_type):
                     
                     execution_time_str = executed_payload_data.get("execution_time")
                     
+                    try:
+                        if execution_time_str:
+                            execution_dt = parser.isoparse(execution_time_str)
+                            execution_dt = execution_dt.astimezone(datetime.timezone.utc)
+                            now_dt = datetime.datetime.now(datetime.timezone.utc)
+
+                            if execution_dt < now_dt:
+                                logger.warning(f"BACKGROUND_TASK: Kế hoạch {plan_type} cho session {session_id} đã quá hạn (Hạn: {execution_time_str}).")
+                                session.status = "Kế hoạch quá hạn"
+                                analysis_repo.commit()
+                                return
+                    except:
+                        session.status = "Lỗi: execution_time không hợp lệ"
+                        analysis_repo.commit()
+                        logger.error("execution_time không hợp lệ")
+                        return
+                    
                     if execution_time_str:
                         try:
                             execution_time_dt = parser.isoparse(execution_time_str)
@@ -109,6 +126,7 @@ def _execute_task_in_background(app, session_id, plan_type):
                                 time.sleep(TASK_DURATION_SCHEDULED_SECONDS)
                                 
                                 session.status = "Đã xử lý"
+                                analysis_repo.commit()
                                 logger.info(f"BACKGROUND_TASK: Hoàn thành & Cập nhật trạng thái 'Đã xử lý' sau khi chờ.")
                             else:
                                 logger.info(f"BACKGROUND_TASK: Đã lên lịch & Lưu Payload cho session {session_id}. Hạn thực thi: {execution_time_str}.")

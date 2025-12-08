@@ -70,7 +70,7 @@ class QAAgent(BaseAgent):
         days_after_planting = (datetime.now().date() - farm.planting_date).days if farm.planting_date else -1
         
         query = f"Lúa {days_after_planting} NSS: {problem_description}. Có nên bón phân lúc này không?"
-        retrieved_context = self.vector_store.retrieve("fertilizer_management", query, k=5)
+        retrieved_context = self.vector_store.retrieve("fertilizer_management", query, k=20)
         
         return self._handle_general_qa(farmer_info, f"Nên làm gì về phân bón? {problem_description}", kwargs.get('history', []), retrieved_context)
         
@@ -83,7 +83,7 @@ class QAAgent(BaseAgent):
         days_after_planting = (datetime.now().date() - farm.planting_date).days if farm.planting_date else -1
 
         query_rag = f"Khuyến nghị tưới nước cho lúa {days_after_planting} NSS: {query}"
-        retrieved_context = self.vector_store.retrieve("water_management", query_rag, k=5)
+        retrieved_context = self.vector_store.retrieve("water_management", query_rag, k=20)
         
         return self._handle_general_qa(farmer_info, f"Câu hỏi về tưới nước: {query}", kwargs.get('history', []), retrieved_context)
 
@@ -129,8 +129,7 @@ class QAAgent(BaseAgent):
                 disease_name=disease_name, 
                 farmer_id=farmer_id,
                 image_path_to_save=image_path_to_save,
-                iot_data=iot_data, 
-                context_data_from_ema=None 
+                iot_data=iot_data
             )
             plan_summary = result.get("plan", {}).get("treatment_plan", {}).get("main_message", "kế hoạch điều trị phù hợp")
             
@@ -156,13 +155,12 @@ class QAAgent(BaseAgent):
         if result.get("error"):
             return result["error"]
             
-        return f"Dạ, tôi đã tạo {plan_summary} cho bác. Bác vui lòng xem chi tiết trong mục **'Thông báo'** nhé."
+        return f"Dạ, tôi đã tạo {plan_summary} cho bác. Bác vui lòng xem chi tiết trong mục Điều trị nhé."
 
-    def _execute_update_tool(self, farmer_info: dict, plan_type: str, user_feedback: str) -> str:
+    def _execute_update_tool(self, farmer_info: dict, plan_type: str, user_feedback: str, history) -> str:
         """Hàm trung gian tìm và cập nhật kế hoạch đang chờ dựa trên phản hồi người dùng."""
-        farmer_id = str(farmer_info.get("farmer_id"))
         
-        farm_id = farmer_info.get('farm_id') 
+        farm_id = farmer_info.get('farmer_id') 
         
         latest_session = self.analysis_repo.get_latest_session_for_farm_by_type(farm_id, plan_type)
         if not latest_session or latest_session.status not in ["Chờ xác nhận", "Đang xử lý"]:
@@ -358,6 +356,8 @@ class QAAgent(BaseAgent):
         history = history or []
         if not farmer_info:
             return {"error": "Không tìm thấy thông tin nông hộ.", "history": history}
+        
+        print(f"Farmer Info Received: {farmer_info}")
         
         greetings = ["chào", "hello", "xin chào", "hi"]
         if not history and question.lower().strip() in greetings:

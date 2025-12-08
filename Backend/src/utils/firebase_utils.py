@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 from src.logging.logger import logger 
 from firebase_admin import db
 
@@ -9,10 +10,12 @@ def push_execution_to_firebase(session_id, payload, plan_type):
     try:
         import time
         timestamp = int(time.time()) 
-        ref = db.reference(f"executions/{session_id}/{plan_type}/{timestamp}")
+        current_date = datetime.now().strftime("%Y%m%d")   
+
+        ref = db.reference(f"executions/{current_date}/{plan_type}/{timestamp}")
         ref.set({
             "session_id": session_id,
-            "payload": payload
+            "payload": payload  
         })
         logger.info(f"[FIREBASE] Đã gửi dữ liệu cho {session_id} ({plan_type}) [{timestamp}]")
     except Exception as e:
